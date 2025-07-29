@@ -7,6 +7,7 @@ import os
 import logging
 from typing import Dict, List, Optional
 from .models.schemas import StockPrediction, MarketSummary, StockMetrics, MarketContext
+from .cache_service import cache, create_cache_key
 
 # Import OpenAI safely
 try:
@@ -33,8 +34,19 @@ class PredictionService:
             logger.warning("OpenAI not available for explanations")
     
     async def predict(self, ticker: str) -> StockPrediction:
-        """Get prediction for a single stock"""
+        """Get prediction for a single stock with caching"""
         try:
+            # Create cache key for this prediction
+            cache_key = create_cache_key("prediction", ticker, datetime.now().strftime("%Y%m%d%H"))
+            
+            # Try to get from cache first
+            cached_prediction = cache.get(cache_key)
+            if cached_prediction:
+                logger.info(f"Cache hit for prediction: {ticker}")
+                return StockPrediction(**cached_prediction)
+            
+            logger.info(f"Cache miss, generating new prediction for: {ticker}")
+            
             # Get latest features
             features = await self._get_latest_features(ticker)
             
@@ -52,7 +64,7 @@ class PredictionService:
             # Extract metrics
             metrics = self._extract_metrics(features)
             
-            return StockPrediction(
+            result = StockPrediction(
                 ticker=ticker,
                 prediction=prediction,
                 confidence=confidence,
@@ -62,6 +74,11 @@ class PredictionService:
                 market_context=market_context,
                 timestamp=datetime.now()
             )
+            
+            # Cache the result
+            cache.set(cache_key, result.dict(), 'predictions')
+            
+            return result
             
         except Exception as e:
             logger.error(f"Error predicting {ticker}: {str(e)}")
@@ -101,7 +118,18 @@ class PredictionService:
         )
     
     async def _get_latest_features(self, ticker: str) -> pd.Series:
-        """Get latest features for prediction"""
+        """Get latest features for prediction with caching"""
+        # Create cache key for stock data
+        cache_key = create_cache_key("stock_data", ticker, datetime.now().strftime("%Y%m%d%H"))
+        
+        # Try cache first
+        cached_features = cache.get(cache_key)
+        if cached_features:
+            logger.info(f"Cache hit for stock features: {ticker}")
+            return pd.Series(cached_features)
+        
+        logger.info(f"Cache miss, fetching fresh data for: {ticker}")
+        
         end = datetime.today()
         start = end - timedelta(days=90)
         
@@ -113,8 +141,12 @@ class PredictionService:
             progress=False
         )
         
+        # Handle empty data
+        if df is None or df.empty:
+            raise ValueError(f"No data available for {ticker}")
+        
         # Handle MultiIndex columns
-        if df.columns.nlevels > 1:
+        if hasattr(df, 'columns') and df.columns.nlevels > 1:
             df.columns = df.columns.droplevel(1)
         
         # Calculate technical indicators
@@ -138,7 +170,12 @@ class PredictionService:
         # Add combined signals
         df = self._add_combined_signals(df)
         
-        return df.dropna().iloc[-1]
+        result = df.dropna().iloc[-1]
+        
+        # Cache the result
+        cache.set(cache_key, result.to_dict(), 'stock_data')
+        
+        return result
     
     def _calculate_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate all technical indicators"""
@@ -255,28 +292,54 @@ class PredictionService:
         return true_range.rolling(window=period).mean()
     
     async def _get_market_context_data(self) -> Dict:
-        """Get market context data"""
+        """Get market context data with caching"""
+        # Create cache key for market data (changes hourly)
+        cache_key = create_cache_key("market_context", datetime.now().strftime("%Y%m%d%H"))
+        
+        # Try cache first
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            logger.info("Cache hit for market context data")
+            return cached_data
+        
+        logger.info("Cache miss, fetching fresh market data")
+        
         try:
             # VIX
             vix = yf.download("^VIX", period="30d", progress=False)
-            vix_current = float(vix["Close"].iloc[-1])
+            if vix is not None and not vix.empty:
+                vix_current = float(vix["Close"].iloc[-1])
+            else:
+                vix_current = 20.0  # Default fallback
             
             # Treasury
             treasury = yf.download("^TNX", period="30d", progress=False)
-            treasury_yield = float(treasury["Close"].iloc[-1])
+            if treasury is not None and not treasury.empty:
+                treasury_yield = float(treasury["Close"].iloc[-1])
+            else:
+                treasury_yield = 4.0  # Default fallback
             
             # Dollar Index
             dxy = yf.download("DX-Y.NYB", period="30d", progress=False)
-            dollar_index = float(dxy["Close"].iloc[-1])
+            if dxy is not None and not dxy.empty:
+                dollar_index = float(dxy["Close"].iloc[-1])
+            else:
+                dollar_index = 100.0  # Default fallback
             
             # Market momentum
             spy = yf.download("SPY", period="30d", progress=False)
-            spy_momentum = float(spy["Close"].pct_change(periods=5).iloc[-1])
+            if spy is not None and not spy.empty:
+                spy_momentum = float(spy["Close"].pct_change(periods=5).iloc[-1])
+            else:
+                spy_momentum = 0.0  # Default fallback
             
             qqq = yf.download("QQQ", period="30d", progress=False)
-            tech_momentum = float(qqq["Close"].pct_change(periods=5).iloc[-1])
+            if qqq is not None and not qqq.empty:
+                tech_momentum = float(qqq["Close"].pct_change(periods=5).iloc[-1])
+            else:
+                tech_momentum = 0.0  # Default fallback
             
-            return {
+            result = {
                 'VIX': vix_current,
                 'Treasury_Yield': treasury_yield,
                 'Dollar_Index': dollar_index,
@@ -288,8 +351,15 @@ class PredictionService:
                 'Strong_Dollar': int(dollar_index > 100),
                 'Bull_Market': int(spy_momentum > 0.02)
             }
+            
+            # Cache the result for 30 minutes
+            cache.set(cache_key, result, 'market_data')
+            
+            return result
+            
         except Exception as e:
             logger.error(f"Error getting market context: {e}")
+            # Return defaults on error
             return {
                 'VIX': 20, 'Treasury_Yield': 4.0, 'Dollar_Index': 100,
                 'SPY_Momentum': 0, 'Tech_Momentum': 0,
@@ -298,7 +368,18 @@ class PredictionService:
             }
     
     async def _get_fundamental_data(self, ticker: str) -> Dict:
-        """Get fundamental data"""
+        """Get fundamental data with caching"""
+        # Create cache key for fundamental data (changes daily)
+        cache_key = create_cache_key("fundamentals", ticker, datetime.now().strftime("%Y%m%d"))
+        
+        # Try cache first
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            logger.info(f"Cache hit for fundamentals: {ticker}")
+            return cached_data
+        
+        logger.info(f"Cache miss, fetching fresh fundamentals for: {ticker}")
+        
         try:
             stock = yf.Ticker(ticker)
             info = stock.info
@@ -311,7 +392,7 @@ class PredictionService:
             profit_margin = info.get('profitMargins', 0.1)
             beta = info.get('beta', 1.0)
             
-            return {
+            result = {
                 'PE_Ratio': pe_ratio, 'PB_Ratio': pb_ratio,
                 'Debt_to_Equity': debt_to_equity, 'ROE': roe,
                 'Revenue_Growth': revenue_growth, 'Profit_Margin': profit_margin,
@@ -320,6 +401,12 @@ class PredictionService:
                 'High_ROE': int(roe > 0.15), 'Low_Debt': int(debt_to_equity < 0.3),
                 'High_Beta': int(beta > 1.3)
             }
+            
+            # Cache for 1 hour
+            cache.set(cache_key, result, 'fundamentals')
+            
+            return result
+            
         except Exception as e:
             logger.error(f"Error getting fundamental data for {ticker}: {e}")
             return {
@@ -330,7 +417,18 @@ class PredictionService:
             }
     
     async def _get_sector_data(self, ticker: str) -> Dict:
-        """Get sector performance data"""
+        """Get sector performance data with caching"""
+        # Create cache key for sector data (changes every 15 minutes)
+        cache_key = create_cache_key("sector", ticker, datetime.now().strftime("%Y%m%d%H"))
+        
+        # Try cache first
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            logger.info(f"Cache hit for sector data: {ticker}")
+            return cached_data
+        
+        logger.info(f"Cache miss, fetching fresh sector data for: {ticker}")
+        
         sector_map = {
             'AAPL': 'XLK', 'NVDA': 'XLK', 'AMZN': 'XLY',
             'GOOGL': 'XLK', 'TSLA': 'XLY'
@@ -339,12 +437,22 @@ class PredictionService:
         try:
             etf_symbol = sector_map.get(ticker, 'SPY')
             etf_data = yf.download(etf_symbol, period="30d", progress=False)
-            sector_momentum = float(etf_data["Close"].pct_change(periods=5).iloc[-1])
             
-            return {
+            if etf_data is not None and not etf_data.empty:
+                sector_momentum = float(etf_data["Close"].pct_change(periods=5).iloc[-1])
+            else:
+                sector_momentum = 0.0  # Default fallback
+            
+            result = {
                 'Sector_Momentum': sector_momentum,
                 'Strong_Sector': int(sector_momentum > 0.01)
             }
+            
+            # Cache for 15 minutes
+            cache.set(cache_key, result, 'market_data')
+            
+            return result
+            
         except Exception as e:
             logger.error(f"Error getting sector data for {ticker}: {e}")
             return {'Sector_Momentum': 0, 'Strong_Sector': 0}
@@ -422,12 +530,13 @@ class PredictionService:
                 Explain this {prediction} recommendation in 2-3 sentences.
                 """
                 
-                response = await self.openai_client.chat.completions.create(
+                response = self.openai_client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=100
                 )
-                return response.choices[0].message.content.strip()
+                content = response.choices[0].message.content
+                return content.strip() if content else "Unable to generate explanation"
             except Exception as e:
                 logger.error(f"OpenAI explanation failed: {e}")
         

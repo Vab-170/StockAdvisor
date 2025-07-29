@@ -10,6 +10,7 @@ import logging
 
 # Import our ML prediction modules
 from .prediction_service import PredictionService
+from .cache_service import cache
 from .models.schemas import (
     StockPrediction, 
     MarketSummary, 
@@ -34,9 +35,19 @@ app = FastAPI(
 )
 
 # Configure CORS
+origins = ["*"]  # Default for development
+if os.getenv("ENVIRONMENT") == "production":
+    cors_origins_env = os.getenv("CORS_ORIGINS", "")
+    if cors_origins_env:
+        try:
+            import json
+            origins = json.loads(cors_origins_env)
+        except:
+            origins = [cors_origins_env]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -122,6 +133,34 @@ async def general_exception_handler(request, exc):
         status_code=500,
         content={"detail": "Internal server error occurred"}
     )
+
+@app.get("/api/cache/stats")
+async def get_cache_stats():
+    """Get cache statistics"""
+    stats = cache.get_stats()
+    return {
+        "cache_stats": stats,
+        "timestamp": datetime.now()
+    }
+
+@app.post("/api/cache/clear")
+async def clear_cache(pattern: Optional[str] = None):
+    """Clear cache (optionally by pattern)"""
+    cache.clear(pattern)
+    return {
+        "message": f"Cache cleared{'for pattern: ' + pattern if pattern else ' completely'}",
+        "timestamp": datetime.now()
+    }
+
+@app.post("/api/cache/cleanup")
+async def cleanup_cache():
+    """Clean up expired cache items"""
+    removed_count = cache.cleanup_expired()
+    return {
+        "message": f"Cleaned up {removed_count} expired cache items",
+        "removed_count": removed_count,
+        "timestamp": datetime.now()
+    }
 
 if __name__ == "__main__":
     import uvicorn

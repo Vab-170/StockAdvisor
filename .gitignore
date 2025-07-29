@@ -7,3 +7,33 @@ frontend/.env
 __pycache__/
 frontend/.next/
 frontend/node_modules/
+
+# Vercel
+.vercel
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Environment files (NEVER commit these!)
+*.env
+.env
+.env.*
+ml_model/.env
+backend/.env
+frontend/.env
+frontend/.env.local
+frontend/.env.production
+frontend/.env.development
+frontend/.env.test
+
+# Local environment files
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.production.local
