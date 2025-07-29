@@ -1,0 +1,16 @@
+{
+  "functions": {
+    "app/main.py": {
+      "runtime": "python3.9"
+    }
+  },
+  "env": {
+    "OPENAI_API_KEY": "@openai_api_key",
+    "ENVIRONMENT": "production"
+  },
+  "build": {
+    "env": {
+      "PYTHONPATH": "/var/task"
+    }
+  }
+}

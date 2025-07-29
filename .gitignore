@@ -1,2 +1,7 @@
 *.pkl
 ml_model/.env
+*.pyc
+*.pyo
+__pycache__/
+frontend/.next/
+frontend/node_modules/
