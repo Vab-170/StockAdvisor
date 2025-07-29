@@ -1,5 +1,7 @@
 *.pkl
 ml_model/.env
+backend/.env
+frontend/.env
 *.pyc
 *.pyo
 __pycache__/

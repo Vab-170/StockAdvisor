@@ -2,7 +2,13 @@
 
 A full-stack application that provides AI-powered stock predictions using machine learning models trained on technical indicators, market context, and fundamental analysis.
 
-## 🚀 Features
+## � Project Components
+
+- 🚀 **[Backend API](./backend/README.md)** - FastAPI backend with ML predictions
+- 🎨 **[Frontend App](./frontend/README.md)** - Next.js React frontend
+- 🤖 **[ML Models](./ml_model/)** - Machine learning training and development
+
+## �🚀 Features
 
 - **Advanced ML Predictions**: 62-feature Random Forest model with 69.9% average accuracy
 - **Real-time Market Data**: Live data from Yahoo Finance, VIX, Treasury yields, and more
@@ -87,8 +93,11 @@ StockAdvisor/
 
 4. **Start the API server**
    ```bash
-   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+   # From project root directory
+   python -m uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
    ```
+
+📚 **For detailed backend setup and API documentation, see [Backend README](./backend/README.md)**
 
 ### Frontend Setup
 
@@ -112,6 +121,8 @@ StockAdvisor/
    ```bash
    npm run dev
    ```
+
+🎨 **For detailed frontend setup and component documentation, see [Frontend README](./frontend/README.md)**
 
 ### Access the Application
 - **Frontend**: http://localhost:3000
