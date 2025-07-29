@@ -6,7 +6,9 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
 import joblib
+import datetime
 
+# Utility functions for technical indicators
 def compute_rsi(series, period=14):
     delta = series.diff()
     gain = delta.clip(lower=0)
@@ -50,12 +52,113 @@ def compute_atr(high, low, close, period=14):
     true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
     return true_range.rolling(window=period).mean()
 
-def fetch_stock_features(ticker, start="2023-01-01", end="2024-01-01"):
-    df = yf.download(ticker, start=start, end=end)
+def get_market_context():
+    """Get market-wide indicators for context"""
+    try:
+        # VIX (Fear Index)
+        vix = yf.download("^VIX", period="30d", progress=False)
+        vix_current = float(vix["Close"].iloc[-1])
+        
+        # 10-Year Treasury Yield
+        treasury = yf.download("^TNX", period="30d", progress=False)
+        treasury_yield = float(treasury["Close"].iloc[-1])
+        
+        # Dollar Index
+        dxy = yf.download("DX-Y.NYB", period="30d", progress=False)
+        dollar_index = float(dxy["Close"].iloc[-1])
+        
+        # S&P 500 momentum
+        spy = yf.download("SPY", period="30d", progress=False)
+        spy_momentum = float(spy["Close"].pct_change(periods=5).iloc[-1])
+        
+        # Tech sector momentum
+        qqq = yf.download("QQQ", period="30d", progress=False)
+        tech_momentum = float(qqq["Close"].pct_change(periods=5).iloc[-1])
+        
+        return {
+            'vix': vix_current,
+            'treasury_yield': treasury_yield,
+            'dollar_index': dollar_index,
+            'spy_momentum': spy_momentum,
+            'tech_momentum': tech_momentum
+        }
+    except:
+        # Default values if data unavailable
+        return {
+            'vix': 20.0,
+            'treasury_yield': 4.0,
+            'dollar_index': 100.0,
+            'spy_momentum': 0.0,
+            'tech_momentum': 0.0
+        }
+
+def get_fundamental_data(ticker):
+    """Get fundamental ratios for the stock"""
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        
+        return {
+            'pe_ratio': info.get('trailingPE', 20.0) or 20.0,
+            'pb_ratio': info.get('priceToBook', 3.0) or 3.0,
+            'debt_to_equity': info.get('debtToEquity', 50.0) or 50.0,
+            'roe': info.get('returnOnEquity', 0.15) or 0.15,
+            'revenue_growth': info.get('revenueGrowth', 0.05) or 0.05,
+            'profit_margin': info.get('profitMargins', 0.1) or 0.1,
+            'beta': info.get('beta', 1.0) or 1.0,
+        }
+    except:
+        # Default values if data unavailable
+        return {
+            'pe_ratio': 20.0,
+            'pb_ratio': 3.0,
+            'debt_to_equity': 50.0,
+            'roe': 0.15,
+            'revenue_growth': 0.05,
+            'profit_margin': 0.1,
+            'beta': 1.0,
+        }
+
+def get_sector_performance(ticker):
+    """Get sector ETF performance"""
+    sector_etfs = {
+        'AAPL': 'XLK',   # Technology
+        'NVDA': 'XLK',   # Technology  
+        'AMZN': 'XLY',   # Consumer Discretionary
+        'GOOGL': 'XLK',  # Technology
+        'TSLA': 'XLY',   # Consumer Discretionary
+    }
+    
+    try:
+        etf_symbol = sector_etfs.get(ticker, 'SPY')
+        etf_data = yf.download(etf_symbol, period="30d", progress=False)
+        sector_momentum = float(etf_data["Close"].pct_change(periods=5).iloc[-1])
+        return sector_momentum
+    except:
+        return 0.0
+
+def fetch_stock_features(ticker):
+    """ Fetch stock data and compute all technical indicators + enhanced features """
+    # Get today's date and one year ago
+    today = datetime.date.today()
+    last_year = today - datetime.timedelta(days=730)  # 2 years of data
+    df = yf.download(ticker, start=last_year.strftime("%Y-%m-%d"), end=today.strftime("%Y-%m-%d"))
     
     # Fix MultiIndex columns issue when downloading single ticker
     if df.columns.nlevels > 1:
         df.columns = df.columns.droplevel(1)
+    
+    # Get market context (same for all stocks on same date)
+    print(f"   Getting market context...")
+    market_data = get_market_context()
+    
+    # Get fundamental data
+    print(f"   Getting fundamental data...")
+    fundamental_data = get_fundamental_data(ticker)
+    
+    # Get sector performance
+    print(f"   Getting sector data...")
+    sector_momentum = get_sector_performance(ticker)
     
     # Basic price features
     df["SMA_10"] = df["Close"].rolling(window=10).mean()
@@ -131,9 +234,53 @@ def fetch_stock_features(ticker, start="2023-01-01", end="2024-01-01"):
     df["Gap_Up"] = (df["Open"] > df["Close"].shift(1) * 1.02).astype(int)
     df["Gap_Down"] = (df["Open"] < df["Close"].shift(1) * 0.98).astype(int)
     
+    # 🚀 NEW ENHANCED FEATURES 🚀
+    
+    # Market Context Features (same for all rows since we get current market state)
+    df["VIX"] = market_data['vix']
+    df["Treasury_Yield"] = market_data['treasury_yield'] 
+    df["Dollar_Index"] = market_data['dollar_index']
+    df["SPY_Momentum"] = market_data['spy_momentum']
+    df["Tech_Momentum"] = market_data['tech_momentum']
+    
+    # Market condition indicators
+    df["Low_VIX"] = (df["VIX"] < 20).astype(int)  # Low fear = bullish
+    df["High_VIX"] = (df["VIX"] > 30).astype(int)  # High fear = bearish
+    df["Rising_Rates"] = (df["Treasury_Yield"] > 4.0).astype(int)  # High rates = pressure on growth
+    df["Strong_Dollar"] = (df["Dollar_Index"] > 100).astype(int)  # Strong dollar = headwind
+    df["Bull_Market"] = (df["SPY_Momentum"] > 0.02).astype(int)  # Strong S&P momentum
+    
+    # Fundamental Features (same for all rows since we get current fundamental state)
+    df["PE_Ratio"] = fundamental_data['pe_ratio']
+    df["PB_Ratio"] = fundamental_data['pb_ratio']
+    df["Debt_to_Equity"] = fundamental_data['debt_to_equity']
+    df["ROE"] = fundamental_data['roe']
+    df["Revenue_Growth"] = fundamental_data['revenue_growth']
+    df["Profit_Margin"] = fundamental_data['profit_margin']
+    df["Beta"] = fundamental_data['beta']
+    
+    # Fundamental condition indicators
+    df["Expensive_PE"] = (df["PE_Ratio"] > 25).astype(int)  # High valuation
+    df["Cheap_PE"] = (df["PE_Ratio"] < 15).astype(int)  # Low valuation
+    df["High_Growth"] = (df["Revenue_Growth"] > 0.1).astype(int)  # Fast growing
+    df["High_ROE"] = (df["ROE"] > 0.2).astype(int)  # Very profitable
+    df["Low_Debt"] = (df["Debt_to_Equity"] < 50).astype(int)  # Conservative debt
+    df["High_Beta"] = (df["Beta"] > 1.2).astype(int)  # More volatile than market
+    
+    # Sector Performance
+    df["Sector_Momentum"] = sector_momentum
+    df["Strong_Sector"] = (df["Sector_Momentum"] > 0.02).astype(int)  # Sector outperforming
+    
+    # Combined signals
+    df["Bullish_Market_Setup"] = (df["Low_VIX"] & df["Bull_Market"] & df["Strong_Sector"]).astype(int)
+    df["Bearish_Market_Setup"] = (df["High_VIX"] & (df["SPY_Momentum"] < -0.02)).astype(int)
+    df["Quality_Growth"] = (df["High_Growth"] & df["High_ROE"] & df["Low_Debt"]).astype(int)
+    
     df = df.dropna()
     
+    # Updated feature list with new enhanced features
     feature_columns = [
+        # Original technical features
         "Close", "SMA_10", "SMA_20", "SMA_50", "EMA_12", "EMA_26",
         "Return", "Return_5", "Return_10", "Volatility", "Volatility_20",
         "RSI", "RSI_Oversold", "RSI_Overbought",
@@ -142,7 +289,20 @@ def fetch_stock_features(ticker, start="2023-01-01", end="2024-01-01"):
         "Stoch_K", "Stoch_D", "Stoch_Oversold", "Stoch_Overbought",
         "ATR", "Volume_Ratio", "High_Volume",
         "Price_Above_SMA20", "Price_Above_SMA50", "SMA_Trend",
-        "Near_Resistance", "Near_Support", "Gap_Up", "Gap_Down"
+        "Near_Resistance", "Near_Support", "Gap_Up", "Gap_Down",
+        
+        # NEW: Market context features
+        "VIX", "Treasury_Yield", "Dollar_Index", "SPY_Momentum", "Tech_Momentum",
+        "Low_VIX", "High_VIX", "Rising_Rates", "Strong_Dollar", "Bull_Market",
+        
+        # NEW: Fundamental features  
+        "PE_Ratio", "PB_Ratio", "Debt_to_Equity", "ROE", "Revenue_Growth", 
+        "Profit_Margin", "Beta", "Expensive_PE", "Cheap_PE", "High_Growth",
+        "High_ROE", "Low_Debt", "High_Beta",
+        
+        # NEW: Sector and combined features
+        "Sector_Momentum", "Strong_Sector", "Bullish_Market_Setup", 
+        "Bearish_Market_Setup", "Quality_Growth"
     ]
     
     return df[feature_columns]
@@ -157,7 +317,7 @@ def train_model(ticker):
     Train a Random Forest model for stock price prediction
     
     Args:
-        ticker (str): Stock symbol (e.g., 'AAPL', 'TSLA')
+        ticker (str): Stock symbol (e.g., 'AAPL',...., 'TSLA')
     """
     # Print status message to track progress
     print(f"Fetching data for {ticker}...")
@@ -232,15 +392,15 @@ def train_model(ticker):
     print(f"\nTop 10 Most Important Features:")
     print(feature_importance.head(10).to_string(index=False))
 
-    # Save trained model components for later use
-    joblib.dump(clf, f"{ticker}_model.pkl")               # Save trained Random Forest model
-    joblib.dump(scaler, f"{ticker}_scaler.pkl")           # Save feature scaler (for consistent preprocessing)
-    joblib.dump(feature_columns, f"{ticker}_features.pkl") # Save feature list (for consistent feature order)
+    # Save trained model components for later use in models folder
+    joblib.dump(clf, f"models/{ticker}_model.pkl")               # Save trained Random Forest model
+    joblib.dump(scaler, f"models/{ticker}_scaler.pkl")           # Save feature scaler (for consistent preprocessing)
+    joblib.dump(feature_columns, f"models/{ticker}_features.pkl") # Save feature list (for consistent feature order)
     
     # Confirm successful save
     print(f"\nModel, scaler, and feature list saved for {ticker}")
 
 if __name__ == "__main__":
-    tickers = ["AAPL", "NVDA", "AMZN", "GOOGL", "TSLA"]  # Portfolio tickers
+    tickers = ["AAPL", "NVDA", "AMZN", "GOOGL", "TSLA"]  # Test all stocks with enhanced features
     for ticker in tickers:
         train_model(ticker)
