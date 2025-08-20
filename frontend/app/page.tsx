@@ -1,68 +1,46 @@
-'use client'
+'use client';
 
-import { useQuery } from '@tanstack/react-query'
-import { StockCard } from '../components/StockCard'
-import { MarketOverview } from '../components/MarketOverview'
-import { LoadingSpinner } from '../components/Loading'
-import { ErrorMessage } from '../components/ErrorMessage'
-import { getMarketSummary } from '../lib/api'
+import { useState, useEffect } from 'react';
 
-export default function HomePage() {
-  const { data: marketData, isLoading, error } = useQuery({
-    queryKey: ['market-summary'],
-    queryFn: getMarketSummary,
-    refetchInterval: 60000, // Refetch every minute
-  })
+export default function Home() {
+	const [data, setData] = useState(null);
+	const [loading, setLoading] = useState(true);
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <LoadingSpinner size="lg" />
-      </div>
-    )
-  }
+	useEffect(() => {
+		const fetchData = async () => {
+			try {
+				const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/stocks`);
+				const result = await response.json();
+				setData(result);
+			} catch (error) {
+				console.error('Error:', error);
+			} finally {
+				setLoading(false);
+			}
+		};
 
-  if (error) {
-    return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <ErrorMessage 
-          message="Failed to load market data" 
-          onRetry={() => window.location.reload()} 
-        />
-      </div>
-    )
-  }
+		fetchData();
+	}, []);
 
-  return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">
-          Market Overview
-        </h1>
-        <p className="text-gray-600">
-          Real-time AI-powered stock predictions and market analysis
-        </p>
-      </div>
+	return (
+		<div style={{ padding: '20px', fontFamily: 'Arial, sans-serif' }}>
+			<h1>Stock Advisor</h1>
 
-      {marketData && (
-        <>
-          <MarketOverview data={marketData} />
-          
-          <div className="mt-8">
-            <h2 className="text-2xl font-bold text-gray-900 mb-6">
-              Stock Predictions
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {marketData.predictions.map((prediction) => (
-                <StockCard
-                  key={prediction.ticker}
-                  prediction={prediction}
-                />
-              ))}
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  )
+			{loading ? (
+				<p>Loading...</p>
+			) : (
+				<div>
+					<h2>API Response:</h2>
+					<pre style={{
+						background: '#f5f5f5',
+						padding: '10px',
+						borderRadius: '5px',
+						overflow: 'auto'
+					}}>
+						{JSON.stringify(data, null, 2)}
+					</pre>
+				</div>
+			)}
+		</div>
+	);
 }
